@@ -1,5 +1,10 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 public class ProceduralTrackGenerator : MonoBehaviour
 {
@@ -45,6 +50,15 @@ public class ProceduralTrackGenerator : MonoBehaviour
     [SerializeField] private bool randomizeSeedOnGenerate = true;
     [SerializeField] private int seed = 12345;
 
+    [Header("Persistence")]
+    [SerializeField] private string trackSaveFolder = "TrainingData/Tracks";
+
+    [Header("Debug")]
+    [SerializeField] private bool showCheckpointGizmos = true;
+    [SerializeField] private float checkpointGizmoRadius = 0.6f;
+    [SerializeField] private Color checkpointGizmoColor = new Color(1f, 0.5f, 0f, 0.9f);
+    [SerializeField] private Color activeCheckpointGizmoColor = new Color(0f, 1f, 0f, 0.95f);
+
     private readonly List<Vector3> pathPoints = new List<Vector3>();
     private Transform trackRoot;
     private Rigidbody carRigidbody;
@@ -57,6 +71,26 @@ public class ProceduralTrackGenerator : MonoBehaviour
     private Vector3 raceFinishPoint;
     private Vector3 raceFinishForward;
     private Vector3 previousTimingPosition;
+    private float totalTrackLength;
+    private string currentTrackId;
+
+    public int SegmentCount => segmentCount;
+    public float SegmentLength => segmentLength;
+    public float RoadWidth => roadWidth;
+    public float RoadThickness => roadThickness;
+    public float RoadJointLength => roadJointLength;
+    public float LineLength => lineLength;
+    public float LineThickness => lineThickness;
+    public bool GenerateBarriers => generateBarriers;
+    public float BarrierHeight => barrierHeight;
+    public float BarrierWidth => barrierWidth;
+    public int Seed => seed;
+    public IReadOnlyList<Vector3> PathPoints => pathPoints;
+    public string CurrentTrackId => currentTrackId;
+    public bool ShowCheckpointGizmos => showCheckpointGizmos;
+    public float CheckpointGizmoRadius => checkpointGizmoRadius;
+    public Color CheckpointGizmoColor => checkpointGizmoColor;
+    public Color ActiveCheckpointGizmoColor => activeCheckpointGizmoColor;
 
     private void Start()
     {
@@ -115,15 +149,15 @@ public class ProceduralTrackGenerator : MonoBehaviour
 
         if (randomizeSeedOnGenerate)
         {
-            seed = Random.Range(int.MinValue, int.MaxValue);
+            seed = UnityEngine.Random.Range(int.MinValue, int.MaxValue);
         }
 
-        var randomState = Random.state;
-        Random.InitState(seed);
+        var randomState = UnityEngine.Random.state;
+        UnityEngine.Random.InitState(seed);
 
         BuildForwardPath();
 
-        Random.state = randomState;
+        UnityEngine.Random.state = randomState;
 
         ClearPreviousTrack();
         trackRoot = new GameObject("Generated Track").transform;
@@ -132,6 +166,98 @@ public class ProceduralTrackGenerator : MonoBehaviour
         BuildRoadSegments();
         BuildCourseMarker(true);
         BuildCourseMarker(false);
+        RecalculateTrackLength();
+        RepositionCarAtStart();
+        ResetTrackTimer();
+        StartTrackTimer();
+        raceStarted = true;
+        raceFinished = false;
+        raceStartPoint = pathPoints[1];
+        raceFinishPoint = pathPoints[pathPoints.Count - 2];
+        raceFinishForward = (pathPoints[pathPoints.Count - 1] - pathPoints[pathPoints.Count - 2]).normalized;
+        previousTimingPosition = GetCarPositionForTiming();
+        currentTrackId = null;
+    }
+
+    public bool TryLoadTrackFromJson(string filePath)
+    {
+        if (!File.Exists(filePath))
+        {
+            Debug.LogWarning($"Track file not found: {filePath}");
+            return false;
+        }
+
+        string json = File.ReadAllText(filePath);
+        TrackLayoutSnapshot snapshot = JsonUtility.FromJson<TrackLayoutSnapshot>(json);
+        if (snapshot == null || snapshot.pathPoints == null || snapshot.pathPoints.Count < 3)
+        {
+            Debug.LogWarning($"Track file is invalid: {filePath}");
+            return false;
+        }
+
+        LoadTrack(snapshot);
+        return true;
+    }
+
+    public string SaveCurrentTrackToJson(string trackId = null, string overrideFolder = null)
+    {
+        if (pathPoints.Count < 3)
+        {
+            return string.Empty;
+        }
+
+        string id = string.IsNullOrWhiteSpace(trackId)
+            ? $"track_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Mathf.Abs(seed)}"
+            : trackId.Trim();
+
+        string folderPath = GetTrackFolderPath(overrideFolder);
+        Directory.CreateDirectory(folderPath);
+
+        TrackLayoutSnapshot snapshot = TrackLayoutSnapshot.FromPath(id, seed, pathPoints, this);
+        string json = JsonUtility.ToJson(snapshot, true);
+        string filePath = Path.Combine(folderPath, $"{id}.json");
+        File.WriteAllText(filePath, json);
+        currentTrackId = id;
+
+#if UNITY_EDITOR
+        AssetDatabase.Refresh();
+#endif
+
+        return filePath;
+    }
+
+    public void LoadTrack(TrackLayoutSnapshot snapshot)
+    {
+        if (snapshot == null || snapshot.pathPoints == null || snapshot.pathPoints.Count < 3)
+        {
+            Debug.LogWarning("Cannot load a null or incomplete track snapshot.");
+            return;
+        }
+
+        seed = snapshot.seed;
+        currentTrackId = snapshot.trackId;
+        segmentCount = Mathf.Max(3, snapshot.segmentCount);
+        segmentLength = Mathf.Max(4f, snapshot.segmentLength);
+        roadWidth = Mathf.Max(1f, snapshot.roadWidth);
+        roadThickness = Mathf.Max(0.05f, snapshot.roadThickness);
+        roadJointLength = Mathf.Max(0.1f, snapshot.roadJointLength);
+        lineLength = Mathf.Max(0.1f, snapshot.lineLength);
+        lineThickness = Mathf.Max(0.01f, snapshot.lineThickness);
+        generateBarriers = snapshot.generateBarriers;
+        barrierHeight = Mathf.Max(0.1f, snapshot.barrierHeight);
+        barrierWidth = Mathf.Max(0.05f, snapshot.barrierWidth);
+
+        pathPoints.Clear();
+        pathPoints.AddRange(snapshot.ToPathPoints());
+
+        ClearPreviousTrack();
+        trackRoot = new GameObject("Generated Track").transform;
+        trackRoot.SetParent(transform, false);
+
+        BuildRoadSegments();
+        BuildCourseMarker(true);
+        BuildCourseMarker(false);
+        RecalculateTrackLength();
         RepositionCarAtStart();
         ResetTrackTimer();
         StartTrackTimer();
@@ -156,7 +282,7 @@ public class ProceduralTrackGenerator : MonoBehaviour
         {
             float maxStepFromAngle = Mathf.Tan(maxTurnAngle * Mathf.Deg2Rad) * segmentLength;
             float maxStep = Mathf.Min(laneStepLimit, maxStepFromAngle);
-            float xOffset = Random.Range(-maxStep, maxStep);
+            float xOffset = UnityEngine.Random.Range(-maxStep, maxStep);
             currentX = Mathf.Clamp(currentX + xOffset, -horizontalBounds, horizontalBounds);
             currentZ += segmentLength;
             pathPoints.Add(new Vector3(currentX, 0f, currentZ));
@@ -170,7 +296,19 @@ public class ProceduralTrackGenerator : MonoBehaviour
             return;
         }
 
-        Destroy(trackRoot.gameObject);
+        if (Application.isPlaying)
+        {
+            Destroy(trackRoot.gameObject);
+        }
+        else
+        {
+#if UNITY_EDITOR
+            DestroyImmediate(trackRoot.gameObject);
+#else
+            Destroy(trackRoot.gameObject);
+#endif
+        }
+
         trackRoot = null;
     }
 
@@ -365,6 +503,7 @@ public class ProceduralTrackGenerator : MonoBehaviour
                 (start + end) * 0.5f,
                 Quaternion.LookRotation(connector.normalized, Vector3.up));
             barrier.transform.localScale = new Vector3(barrierWidth, barrierHeight, length);
+            barrier.AddComponent<RaycastObstacle>();
 
             ApplyBarrierSurfaceSettings(barrier);
         }
@@ -498,6 +637,175 @@ public class ProceduralTrackGenerator : MonoBehaviour
         }
     }
 
+    public Vector3 GetCarSpawnPosition()
+    {
+        if (pathPoints.Count < 3)
+        {
+            return transform.position;
+        }
+
+        return pathPoints[1] + Vector3.up * (carSpawnHeight + lineThickness);
+    }
+
+    public Quaternion GetCarSpawnRotation()
+    {
+        if (pathPoints.Count < 3)
+        {
+            return transform.rotation;
+        }
+
+        Vector3 start = pathPoints[1];
+        Vector3 next = pathPoints[2];
+        return Quaternion.LookRotation((next - start).normalized, Vector3.up);
+    }
+
+    public float GetProgressAlongTrack(Vector3 position)
+    {
+        if (pathPoints.Count < 2)
+        {
+            return 0f;
+        }
+
+        float bestDistance = float.MaxValue;
+        float bestProgress = 0f;
+        float accumulatedLength = 0f;
+
+        for (int i = 0; i < pathPoints.Count - 1; i++)
+        {
+            Vector3 start = pathPoints[i];
+            Vector3 end = pathPoints[i + 1];
+            Vector3 segment = end - start;
+            float segmentLengthValue = segment.magnitude;
+            if (segmentLengthValue <= 0.001f)
+            {
+                continue;
+            }
+
+            float t = Mathf.Clamp01(Vector3.Dot(position - start, segment) / segment.sqrMagnitude);
+            Vector3 projectedPoint = Vector3.Lerp(start, end, t);
+            float distance = Vector3.Distance(position, projectedPoint);
+
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestProgress = accumulatedLength + (segmentLengthValue * t);
+            }
+
+            accumulatedLength += segmentLengthValue;
+        }
+
+        return bestProgress;
+    }
+
+    public float GetDistanceFromCenterline(Vector3 position)
+    {
+        if (pathPoints.Count < 2)
+        {
+            return float.MaxValue;
+        }
+
+        float bestDistance = float.MaxValue;
+
+        for (int i = 0; i < pathPoints.Count - 1; i++)
+        {
+            Vector3 start = pathPoints[i];
+            Vector3 end = pathPoints[i + 1];
+            Vector3 segment = end - start;
+            if (segment.sqrMagnitude <= 0.001f)
+            {
+                continue;
+            }
+
+            float t = Mathf.Clamp01(Vector3.Dot(position - start, segment) / segment.sqrMagnitude);
+            Vector3 projectedPoint = Vector3.Lerp(start, end, t);
+            float distance = Vector3.Distance(position, projectedPoint);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+            }
+        }
+
+        return bestDistance;
+    }
+
+    public bool IsOffTrack(Vector3 position)
+    {
+        return GetDistanceFromCenterline(position) > (roadWidth * 0.6f);
+    }
+
+    public bool HasFinishedLap(Vector3 currentPosition)
+    {
+        if (raceFinished)
+        {
+            return true;
+        }
+
+        if (HasCrossedFinishLine(previousTimingPosition, currentPosition))
+        {
+            raceFinished = true;
+            previousTimingPosition = currentPosition;
+            return true;
+        }
+
+        previousTimingPosition = currentPosition;
+        return false;
+    }
+
+    public int GetCheckpointCount()
+    {
+        return Mathf.Max(0, pathPoints.Count - 3);
+    }
+
+    public Vector3 GetCheckpointPosition(int checkpointIndex)
+    {
+        int checkpointCount = GetCheckpointCount();
+        if (checkpointCount == 0)
+        {
+            return raceFinishPoint;
+        }
+
+        int pointIndex = Mathf.Clamp(checkpointIndex, 0, checkpointCount - 1) + 2;
+        return pathPoints[pointIndex];
+    }
+
+    public Vector3 GetCheckpointForward(int checkpointIndex)
+    {
+        int checkpointCount = GetCheckpointCount();
+        if (checkpointCount == 0)
+        {
+            return raceFinishForward.sqrMagnitude > 0.0001f ? raceFinishForward : Vector3.forward;
+        }
+
+        int pointIndex = Mathf.Clamp(checkpointIndex, 0, checkpointCount - 1) + 2;
+        int previousIndex = Mathf.Max(0, pointIndex - 1);
+        int nextIndex = Mathf.Min(pathPoints.Count - 1, pointIndex + 1);
+        return GetJointForward(pathPoints[previousIndex], pathPoints[pointIndex], pathPoints[nextIndex]);
+    }
+
+    public Vector3 GetFinishPoint()
+    {
+        return raceFinishPoint;
+    }
+
+    public float GetDistanceToFinish(Vector3 position)
+    {
+        return Vector3.Distance(position, raceFinishPoint);
+    }
+
+    public float GetSignedDistanceFromStartLine(Vector3 position)
+    {
+        if (pathPoints.Count < 3)
+        {
+            return 0f;
+        }
+
+        Vector3 startPoint = pathPoints[1];
+        Vector3 startForward = (pathPoints[2] - pathPoints[1]).normalized;
+        Quaternion startFrame = Quaternion.LookRotation(startForward, Vector3.up);
+        Vector3 localPosition = Quaternion.Inverse(startFrame) * (position - startPoint);
+        return localPosition.z;
+    }
+
     private void ResetTrackTimer()
     {
         if (trackTimer != null)
@@ -560,6 +868,22 @@ public class ProceduralTrackGenerator : MonoBehaviour
         return resolvedCarTransform.position;
     }
 
+    private void RecalculateTrackLength()
+    {
+        totalTrackLength = 0f;
+
+        for (int i = 0; i < pathPoints.Count - 1; i++)
+        {
+            totalTrackLength += Vector3.Distance(pathPoints[i], pathPoints[i + 1]);
+        }
+    }
+
+    private string GetTrackFolderPath(string overrideFolder = null)
+    {
+        string relativeFolder = string.IsNullOrWhiteSpace(overrideFolder) ? trackSaveFolder : overrideFolder;
+        return Path.Combine(Application.dataPath, relativeFolder);
+    }
+
     private void EnsureTrackTimer()
     {
         if (trackTimer != null)
@@ -601,5 +925,20 @@ public class ProceduralTrackGenerator : MonoBehaviour
         }
 
         return null;
+    }
+
+    private void OnDrawGizmos()
+    {
+        if (!showCheckpointGizmos || pathPoints == null || pathPoints.Count < 4)
+        {
+            return;
+        }
+
+        float radius = Mathf.Max(0.05f, checkpointGizmoRadius);
+        for (int i = 0; i < GetCheckpointCount(); i++)
+        {
+            Gizmos.color = checkpointGizmoColor;
+            Gizmos.DrawSphere(GetCheckpointPosition(i), radius);
+        }
     }
 }

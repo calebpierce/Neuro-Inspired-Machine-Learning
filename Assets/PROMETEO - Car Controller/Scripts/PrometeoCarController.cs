@@ -16,6 +16,11 @@ using UnityEngine.UI;
 
 public class PrometeoCarController : MonoBehaviour
 {
+    [NonSerialized] public bool useExternalInput;
+    [NonSerialized] private float externalSteeringInput;
+    [NonSerialized] private float externalThrottleInput;
+    [NonSerialized] private float externalBrakeInput;
+    [NonSerialized] private bool externalHandbrakeInput;
 
     //CAR SETUP
 
@@ -287,7 +292,9 @@ public class PrometeoCarController : MonoBehaviour
       In this part of the code we specify what the car needs to do if the user presses W (throttle), S (reverse),
       A (turn left), D (turn right) or Space bar (handbrake).
       */
-      if (useTouchControls && touchControlsSetup){
+      if (useExternalInput){
+        ApplyExternalControls();
+      }else if (useTouchControls && touchControlsSetup){
 
         if(throttlePTI.buttonPressed){
           CancelInvoke("DecelerateCar");
@@ -371,6 +378,41 @@ public class PrometeoCarController : MonoBehaviour
 
     }
 
+    public void SetExternalInput(float steeringInput, float throttleInput, float brakeInput, bool handbrakeInput)
+    {
+      externalSteeringInput = Mathf.Clamp(steeringInput, -1f, 1f);
+      externalThrottleInput = Mathf.Clamp(throttleInput, -1f, 1f);
+      externalBrakeInput = Mathf.Clamp01(brakeInput);
+      externalHandbrakeInput = handbrakeInput;
+    }
+
+    public void ResetVehicleState()
+    {
+      CancelInvoke();
+      deceleratingCar = false;
+      steeringAxis = 0f;
+      throttleAxis = 0f;
+      driftingAxis = 0f;
+      isDrifting = false;
+      isTractionLocked = false;
+
+      frontLeftCollider.motorTorque = 0f;
+      frontRightCollider.motorTorque = 0f;
+      rearLeftCollider.motorTorque = 0f;
+      rearRightCollider.motorTorque = 0f;
+
+      frontLeftCollider.brakeTorque = 0f;
+      frontRightCollider.brakeTorque = 0f;
+      rearLeftCollider.brakeTorque = 0f;
+      rearRightCollider.brakeTorque = 0f;
+
+      frontLeftCollider.steerAngle = 0f;
+      frontRightCollider.steerAngle = 0f;
+
+      RecoverTraction();
+      DriftCarPS();
+    }
+
     // This method converts the car speed data from float to string, and then set the text of the UI carSpeedText with this value.
     public void CarSpeedUI(){
 
@@ -383,6 +425,40 @@ public class PrometeoCarController : MonoBehaviour
           }
       }
 
+    }
+
+    private void ApplyExternalControls()
+    {
+      CancelInvoke("DecelerateCar");
+      deceleratingCar = false;
+
+      if(externalThrottleInput > 0.05f){
+        GoForward();
+      }else{
+        ThrottleOff();
+        if(!externalHandbrakeInput){
+          InvokeRepeating("DecelerateCar", 0f, 0.1f);
+          deceleratingCar = true;
+        }
+      }
+
+      if(externalBrakeInput > 0.1f){
+        Brakes();
+      }
+
+      if(externalSteeringInput < -0.05f){
+        TurnLeft();
+      }else if(externalSteeringInput > 0.05f){
+        TurnRight();
+      }else if(steeringAxis != 0f){
+        ResetSteeringAngle();
+      }
+
+      if(externalHandbrakeInput){
+        Handbrake();
+      }else{
+        RecoverTraction();
+      }
     }
 
     // This method controls the car sounds. For example, the car engine will sound slow when the car speed is low because the

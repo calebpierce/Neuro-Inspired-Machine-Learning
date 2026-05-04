@@ -1,0 +1,56 @@
+{
+    "DriverStandard": {
+        "checkpoints": [
+            {
+                "steps": 499983,
+                "file_path": "results\\driver_standard_track_a_v6\\DriverStandard\\DriverStandard-499983.onnx",
+                "reward": 168.58952646553516,
+                "creation_time": 1777852968.0544713,
+                "auxillary_file_paths": [
+                    "results\\driver_standard_track_a_v6\\DriverStandard\\DriverStandard-499983.pt"
+                ]
+            },
+            {
+                "steps": 999999,
+                "file_path": "results\\driver_standard_track_a_v6\\DriverStandard\\DriverStandard-999999.onnx",
+                "reward": 237.71536803245544,
+                "creation_time": 1777854308.8315635,
+                "auxillary_file_paths": [
+                    "results\\driver_standard_track_a_v6\\DriverStandard\\DriverStandard-999999.pt"
+                ]
+            },
+            {
+                "steps": 1499975,
+                "file_path": "results\\driver_standard_track_a_v6\\DriverStandard\\DriverStandard-1499975.onnx",
+                "reward": 325.7782669067383,
+                "creation_time": 1777855664.6608002,
+                "auxillary_file_paths": [
+                    "results\\driver_standard_track_a_v6\\DriverStandard\\DriverStandard-1499975.pt"
+                ]
+            },
+            {
+                "steps": 1782893,
+                "file_path": "results\\driver_standard_track_a_v6\\DriverStandard\\DriverStandard-1782893.onnx",
+                "reward": 232.19119501113892,
+                "creation_time": 1777856488.9042997,
+                "auxillary_file_paths": [
+                    "results\\driver_standard_track_a_v6\\DriverStandard\\DriverStandard-1782893.pt"
+                ]
+            }
+        ],
+        "final_checkpoint": {
+            "steps": 1782893,
+            "file_path": "results\\driver_standard_track_a_v6\\DriverStandard.onnx",
+            "reward": 232.19119501113892,
+            "creation_time": 1777856488.9042997,
+            "auxillary_file_paths": [
+                "results\\driver_standard_track_a_v6\\DriverStandard\\DriverStandard-1782893.pt"
+            ]
+        }
+    },
+    "metadata": {
+        "stats_format_version": "0.3.0",
+        "mlagents_version": "1.1.0",
+        "torch_version": "2.2.2+cpu"
+    }
+}
