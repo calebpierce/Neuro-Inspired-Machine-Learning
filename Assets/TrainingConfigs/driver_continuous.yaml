@@ -22,7 +22,7 @@ default_settings:
   summary_freq: 25000
 
 behaviors:
-  DriverContinuous:
+  DriverStandard:
     trainer_type: ppo
     hyperparameters:
       batch_size: 2048

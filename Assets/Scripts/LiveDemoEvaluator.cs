@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.IO;
+using System.Collections;
 using System.Reflection;
 using System.Text;
 using Unity.InferenceEngine;
@@ -55,11 +57,13 @@ public class LiveDemoEvaluator : MonoBehaviour
     [Header("Inference Models")]
     [SerializeField] private ModelAsset standardModelTrackABefore;
     [SerializeField] private ModelAsset standardModelTrackBAfter;
+    [SerializeField] private ModelAsset replayModelTrackBAfter;
 
     [Header("Evaluation Setup")]
     [SerializeField] private int episodesPerScenario = 100;
     [SerializeField] private string trackAId = "TrackA";
     [SerializeField] private string trackBId = "TrackB";
+    [SerializeField] private string resultsFileName = "live_demo_results.txt";
     [SerializeField] private bool autoStartOnPlay = true;
     [SerializeField] private bool hideTrainingStatsOverlay = true;
     [SerializeField] private bool hideCheckpointGizmos = true;
@@ -79,8 +83,8 @@ public class LiveDemoEvaluator : MonoBehaviour
 
     [Header("Simulation Speed")]
     [SerializeField] private float simulationSpeed = 1f;
-    [SerializeField] private float minSimulationSpeed = 0.25f;
-    [SerializeField] private float maxSimulationSpeed = 8f;
+    [SerializeField] private float minSimulationSpeed = 1f;
+    [SerializeField] private float maxSimulationSpeed = 100f;
 
     [Header("Build Performance Mode")]
     [SerializeField] private bool useFastBuildMode = false;
@@ -91,7 +95,7 @@ public class LiveDemoEvaluator : MonoBehaviour
     [SerializeField] private bool disableVSync = true;
     [SerializeField] private int targetFrameRate = -1;
 
-    private readonly List<ScenarioMetrics> scenarios = new List<ScenarioMetrics>(3);
+    private readonly List<ScenarioMetrics> scenarios = new List<ScenarioMetrics>(6);
     private int currentScenarioIndex;
     private bool evaluationStarted;
     private bool evaluationCompleted;
@@ -164,11 +168,18 @@ public class LiveDemoEvaluator : MonoBehaviour
         ApplyEvaluationVisualSettings();
         if (autoStartOnPlay)
         {
-            BeginEvaluation();
+            StartCoroutine(BeginEvaluationDeferred());
         }
 
         ApplyCameraLayout();
         ApplySimulationSpeed();
+    }
+
+    private IEnumerator BeginEvaluationDeferred()
+    {
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        BeginEvaluation();
     }
 
     private void Update()
@@ -198,9 +209,9 @@ public class LiveDemoEvaluator : MonoBehaviour
             return;
         }
 
-        if (standardModelTrackABefore == null || standardModelTrackBAfter == null)
+        if (standardModelTrackABefore == null || standardModelTrackBAfter == null || replayModelTrackBAfter == null)
         {
-            Debug.LogError("Assign both inference models on LiveDemoEvaluator before starting the evaluation.", this);
+            Debug.LogError("Assign the standard before model, standard after model, and replay after model on LiveDemoEvaluator before starting the evaluation.", this);
             return;
         }
 
@@ -213,7 +224,7 @@ public class LiveDemoEvaluator : MonoBehaviour
         });
         scenarios.Add(new ScenarioMetrics
         {
-            Title = "Standard Model on Track B",
+            Title = "Standard Model on Track B (After)",
             TrackId = trackBId,
             Model = standardModelTrackBAfter
         });
@@ -222,6 +233,24 @@ public class LiveDemoEvaluator : MonoBehaviour
             Title = "Standard Model on Track A (After)",
             TrackId = trackAId,
             Model = standardModelTrackBAfter
+        });
+        scenarios.Add(new ScenarioMetrics
+        {
+            Title = "Replay Model on Track A (Before)",
+            TrackId = trackAId,
+            Model = standardModelTrackABefore
+        });
+        scenarios.Add(new ScenarioMetrics
+        {
+            Title = "Replay Model on Track B (After)",
+            TrackId = trackBId,
+            Model = replayModelTrackBAfter
+        });
+        scenarios.Add(new ScenarioMetrics
+        {
+            Title = "Replay Model on Track A (After)",
+            TrackId = trackAId,
+            Model = replayModelTrackBAfter
         });
 
         currentScenarioIndex = 0;
@@ -251,6 +280,7 @@ public class LiveDemoEvaluator : MonoBehaviour
         if (currentScenarioIndex >= scenarios.Count)
         {
             evaluationCompleted = true;
+            WriteResultsReport();
             if (behaviorParameters != null)
             {
                 behaviorParameters.BehaviorType = BehaviorType.InferenceOnly;
@@ -266,8 +296,17 @@ public class LiveDemoEvaluator : MonoBehaviour
     private void ApplyScenario(ScenarioMetrics scenario)
     {
         behaviorParameters.Model = scenario.Model;
+        carDrivingAgent.SetModel(behaviorParameters.BehaviorName, scenario.Model, behaviorParameters.InferenceDevice);
         behaviorParameters.BehaviorType = BehaviorType.InferenceOnly;
         trainingManager.ConfigureStandardTrack(scenario.TrackId);
+        if (trainingManager.CarAdapter != null)
+        {
+            trainingManager.CarAdapter.ClearAction();
+        }
+
+        Debug.Log(
+            $"LiveDemoEvaluator applied scenario '{scenario.Title}' with model '{(scenario.Model != null ? scenario.Model.name : "missing")}' on track '{scenario.TrackId}'.",
+            this);
         UpdateOverheadCameraFraming();
     }
 
@@ -313,9 +352,9 @@ public class LiveDemoEvaluator : MonoBehaviour
             RestartEvaluation();
         }
         GUILayout.EndHorizontal();
-        GUILayout.Label(BuildStatusText(), textStyle);
+        GUILayout.Label(BuildStatusSummaryText(), textStyle);
         GUILayout.Space(8f);
-        DrawScenarioProgressSection();
+        DrawScenarioStatusBlocks();
         GUILayout.EndArea();
 
         if (showFullscreenResults)
@@ -327,8 +366,9 @@ public class LiveDemoEvaluator : MonoBehaviour
     private void DrawSimulationSpeedControls()
     {
         GUILayout.Space(6f);
-        GUILayout.Label($"Simulation Speed: {simulationSpeed:F2}x", textStyle);
+        GUILayout.Label($"Simulation Speed: {simulationSpeed:F0}x", textStyle);
         float updatedSpeed = GUILayout.HorizontalSlider(simulationSpeed, minSimulationSpeed, maxSimulationSpeed);
+        updatedSpeed = QuantizeSimulationSpeed(updatedSpeed);
         if (!Mathf.Approximately(updatedSpeed, simulationSpeed))
         {
             simulationSpeed = updatedSpeed;
@@ -338,9 +378,9 @@ public class LiveDemoEvaluator : MonoBehaviour
         GUILayout.Space(8f);
     }
 
-    private string BuildStatusText()
+    private string BuildStatusSummaryText()
     {
-        var builder = new StringBuilder(1024);
+        var builder = new StringBuilder(256);
         builder.AppendLine($"Episodes Per Scenario: {episodesPerScenario}");
 
         if (!evaluationStarted)
@@ -360,31 +400,6 @@ public class LiveDemoEvaluator : MonoBehaviour
             builder.AppendLine("Status: Evaluation complete.");
         }
 
-        builder.AppendLine();
-        foreach (ScenarioMetrics scenario in scenarios)
-        {
-            string avgTimeText = float.IsNaN(scenario.AverageCompletionTime) ? "n/a" : $"{scenario.AverageCompletionTime:F2}s";
-            string bestTimeText = float.IsPositiveInfinity(scenario.BestTime) ? "n/a" : $"{scenario.BestTime:F2}s";
-            builder.AppendLine($"{scenario.Title}");
-            builder.AppendLine($"  Completion: {scenario.Completions}/{scenario.EpisodesCompleted} ({scenario.CompletionRate:P1})");
-            builder.AppendLine($"  Avg Successful Time: {avgTimeText}");
-            builder.AppendLine($"  Best Time: {bestTimeText}");
-            builder.AppendLine($"  Avg Reward: {scenario.AverageReward:F2}");
-            builder.AppendLine($"  Avg Speed: {scenario.AverageSpeed:F2}");
-            builder.AppendLine();
-        }
-
-        if (scenarios.Count >= 3)
-        {
-            ScenarioMetrics before = scenarios[0];
-            ScenarioMetrics after = scenarios[2];
-            string beforeTime = float.IsNaN(before.AverageCompletionTime) ? "n/a" : $"{before.AverageCompletionTime:F2}s";
-            string afterTime = float.IsNaN(after.AverageCompletionTime) ? "n/a" : $"{after.AverageCompletionTime:F2}s";
-            builder.AppendLine("Track A Comparison");
-            builder.AppendLine($"  Before Track B training: {beforeTime}, {before.CompletionRate:P1} completion");
-            builder.AppendLine($"  After Track B training: {afterTime}, {after.CompletionRate:P1} completion");
-        }
-
         return builder.ToString();
     }
 
@@ -395,37 +410,130 @@ public class LiveDemoEvaluator : MonoBehaviour
         if (scenarios.Count >= 3)
         {
             ScenarioMetrics before = scenarios[0];
-            ScenarioMetrics after = scenarios[2];
-            builder.AppendLine($"Before Track B training completion: {before.CompletionRate:P1}");
-            builder.AppendLine($"After Track B training completion: {after.CompletionRate:P1}");
-            builder.AppendLine($"Before Track B avg success time: {(float.IsNaN(before.AverageCompletionTime) ? "n/a" : $"{before.AverageCompletionTime:F2}s")}");
-            builder.AppendLine($"After Track B avg success time: {(float.IsNaN(after.AverageCompletionTime) ? "n/a" : $"{after.AverageCompletionTime:F2}s")}");
+            ScenarioMetrics standardAfter = scenarios[2];
+            builder.AppendLine($"Standard before Track B completion: {before.CompletionRate:P1}");
+            builder.AppendLine($"Standard after Track B completion: {standardAfter.CompletionRate:P1}");
+            builder.AppendLine($"Standard before Track B avg success time: {(float.IsNaN(before.AverageCompletionTime) ? "n/a" : $"{before.AverageCompletionTime:F2}s")}");
+            builder.AppendLine($"Standard after Track B avg success time: {(float.IsNaN(standardAfter.AverageCompletionTime) ? "n/a" : $"{standardAfter.AverageCompletionTime:F2}s")}");
+        }
+
+        if (scenarios.Count >= 5)
+        {
+            ScenarioMetrics replayBefore = scenarios[3];
+            ScenarioMetrics replayAfter = scenarios[5];
+            builder.AppendLine();
+            builder.AppendLine($"Replay before Track B completion: {replayBefore.CompletionRate:P1}");
+            builder.AppendLine($"Replay after Track B completion: {replayAfter.CompletionRate:P1}");
+            builder.AppendLine($"Replay before Track B avg success time: {(float.IsNaN(replayBefore.AverageCompletionTime) ? "n/a" : $"{replayBefore.AverageCompletionTime:F2}s")}");
+            builder.AppendLine($"Replay after Track B avg success time: {(float.IsNaN(replayAfter.AverageCompletionTime) ? "n/a" : $"{replayAfter.AverageCompletionTime:F2}s")}");
+            builder.AppendLine($"Replay completion change: {(replayAfter.CompletionRate - replayBefore.CompletionRate):P1}");
         }
 
         return builder.ToString();
     }
 
-    private void DrawScenarioProgressSection()
+    private void WriteResultsReport()
+    {
+        string resultsPath = GetResultsOutputPath();
+        string directory = Path.GetDirectoryName(resultsPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        File.WriteAllText(resultsPath, BuildResultsReportText());
+        Debug.Log($"Live demo results written to '{resultsPath}'.", this);
+    }
+
+    private string BuildResultsReportText()
+    {
+        var builder = new StringBuilder(4096);
+        builder.AppendLine("Continuous Learning Track Driving - Live Demo Results");
+        builder.AppendLine($"Generated: {System.DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        builder.AppendLine($"Episodes Per Scenario: {episodesPerScenario}");
+        builder.AppendLine();
+        builder.AppendLine("Scenario Results");
+
+        foreach (ScenarioMetrics scenario in scenarios)
+        {
+            string avgTimeText = float.IsNaN(scenario.AverageCompletionTime) ? "n/a" : $"{scenario.AverageCompletionTime:F2}s";
+            string bestTimeText = float.IsPositiveInfinity(scenario.BestTime) ? "n/a" : $"{scenario.BestTime:F2}s";
+
+            builder.AppendLine(scenario.Title);
+            builder.AppendLine($"Track: {scenario.TrackId}");
+            builder.AppendLine($"Episodes Completed: {scenario.EpisodesCompleted}/{episodesPerScenario}");
+            builder.AppendLine($"Completion Rate: {scenario.CompletionRate:P1}");
+            builder.AppendLine($"Average Successful Time: {avgTimeText}");
+            builder.AppendLine($"Best Time: {bestTimeText}");
+            builder.AppendLine($"Average Reward: {scenario.AverageReward:F2}");
+            builder.AppendLine($"Average Speed: {scenario.AverageSpeed:F2}");
+            builder.AppendLine();
+        }
+
+        builder.AppendLine(BuildDetailedTableText().TrimEnd());
+        return builder.ToString();
+    }
+
+    private string GetResultsOutputPath()
+    {
+#if UNITY_EDITOR
+        return Path.Combine(Application.dataPath, "TrainingData", "Results", resultsFileName);
+#else
+        string appRoot = Directory.GetParent(Application.dataPath)?.FullName ?? Application.dataPath;
+        return Path.Combine(appRoot, resultsFileName);
+#endif
+    }
+
+    private void DrawScenarioStatusBlocks()
     {
         if (scenarios.Count == 0)
         {
             return;
         }
 
-        GUILayout.Label("Evaluation Progress", textStyle);
+        GUILayout.Label("Scenario Results", textStyle);
         GUILayout.Space(4f);
+        GUILayout.BeginHorizontal();
+        DrawScenarioColumn("Standard", 0, 3);
+        GUILayout.Space(10f);
+        DrawScenarioColumn("Replay", 3, 3);
+        GUILayout.EndHorizontal();
+    }
 
-        for (int i = 0; i < scenarios.Count; i++)
+    private void DrawScenarioColumn(string columnTitle, int startIndex, int count)
+    {
+        GUILayout.BeginVertical(GUILayout.ExpandWidth(true));
+        GUILayout.Label(columnTitle, textStyle);
+        GUILayout.Space(2f);
+
+        int endIndex = Mathf.Min(scenarios.Count, startIndex + count);
+        for (int i = startIndex; i < endIndex; i++)
         {
-            ScenarioMetrics scenario = scenarios[i];
-            float progress = Mathf.Clamp01((float)scenario.EpisodesCompleted / Mathf.Max(1, episodesPerScenario));
-            string label = $"{scenario.Title}: {scenario.EpisodesCompleted}/{episodesPerScenario}";
-
-            GUILayout.Label(label, textStyle);
-            Rect barRect = GUILayoutUtility.GetRect(10f, 22f, GUILayout.ExpandWidth(true));
-            DrawProgressBar(barRect, progress, GetScenarioColor(i));
-            GUILayout.Space(4f);
+            DrawScenarioBlock(i);
         }
+
+        GUILayout.EndVertical();
+    }
+
+    private void DrawScenarioBlock(int scenarioIndex)
+    {
+        ScenarioMetrics scenario = scenarios[scenarioIndex];
+        float progress = Mathf.Clamp01((float)scenario.EpisodesCompleted / Mathf.Max(1, episodesPerScenario));
+        string avgTimeText = float.IsNaN(scenario.AverageCompletionTime) ? "n/a" : $"{scenario.AverageCompletionTime:F2}s";
+        string bestTimeText = float.IsPositiveInfinity(scenario.BestTime) ? "n/a" : $"{scenario.BestTime:F2}s";
+
+        GUILayout.Label(scenario.Title, textStyle);
+        Rect barRect = GUILayoutUtility.GetRect(10f, 22f, GUILayout.ExpandWidth(true));
+        DrawProgressBar(barRect, progress, GetScenarioColor(scenarioIndex));
+        GUILayout.Label(
+            $"Runs: {scenario.EpisodesCompleted}/{episodesPerScenario}\n" +
+            $"Completion: {scenario.Completions}/{scenario.EpisodesCompleted} ({scenario.CompletionRate:P1})\n" +
+            $"Avg Successful Time: {avgTimeText}\n" +
+            $"Best Time: {bestTimeText}\n" +
+            $"Avg Reward: {scenario.AverageReward:F2}\n" +
+            $"Avg Speed: {scenario.AverageSpeed:F2}",
+            textStyle);
+        GUILayout.Space(8f);
     }
 
     private void DrawComparisonCharts(float availableWidth)
@@ -482,7 +590,7 @@ public class LiveDemoEvaluator : MonoBehaviour
             float x = rect.x + 10f + i * (barWidth + gap);
             float y = chartTop + (chartHeight - barHeight);
 
-            Color barColor = i == 2 ? new Color(0.85f, 0.38f, 0.32f) : (i == 1 ? new Color(0.29f, 0.63f, 0.89f) : new Color(0.28f, 0.76f, 0.47f));
+            Color barColor = GetScenarioColor(i);
             DrawSolidRect(new Rect(x, y, barWidth, barHeight), barColor);
 
             string valueText = useCompletionRate ? $"{value:P0}" : (float.IsNaN(scenario.AverageCompletionTime) ? "n/a" : $"{scenario.AverageCompletionTime:F1}s");
@@ -496,8 +604,11 @@ public class LiveDemoEvaluator : MonoBehaviour
         return scenarioIndex switch
         {
             0 => "Track A Before",
-            1 => "Track B",
-            2 => "Track A After",
+            1 => "Std Track B",
+            2 => "Std Track A After",
+            3 => "Replay Track A Before",
+            4 => "Replay Track B",
+            5 => "Replay Track A After",
             _ => $"Run {scenarioIndex + 1}"
         };
     }
@@ -603,6 +714,9 @@ public class LiveDemoEvaluator : MonoBehaviour
             0 => new Color(0.28f, 0.76f, 0.47f),
             1 => new Color(0.29f, 0.63f, 0.89f),
             2 => new Color(0.85f, 0.38f, 0.32f),
+            3 => new Color(0.52f, 0.78f, 0.63f),
+            4 => new Color(0.65f, 0.49f, 0.89f),
+            5 => new Color(0.92f, 0.66f, 0.27f),
             _ => new Color(0.75f, 0.75f, 0.75f)
         };
     }
@@ -763,12 +877,23 @@ public class LiveDemoEvaluator : MonoBehaviour
 
     private void ApplySimulationSpeed()
     {
-        float clampedSpeed = Mathf.Clamp(simulationSpeed, minSimulationSpeed, maxSimulationSpeed);
+        float clampedSpeed = Mathf.Clamp(QuantizeSimulationSpeed(simulationSpeed), minSimulationSpeed, maxSimulationSpeed);
         simulationSpeed = clampedSpeed;
         Time.timeScale = clampedSpeed;
         // Keep the physics timestep constant in simulation time so the car
         // doesn't become numerically unstable as playback speed increases.
         Time.fixedDeltaTime = baseFixedDeltaTime;
+    }
+
+    private float QuantizeSimulationSpeed(float rawSpeed)
+    {
+        float clampedSpeed = Mathf.Clamp(rawSpeed, minSimulationSpeed, maxSimulationSpeed);
+        if (clampedSpeed < 5.5f)
+        {
+            return 1f;
+        }
+
+        return Mathf.Clamp(Mathf.Round(clampedSpeed / 10f) * 10f, 10f, maxSimulationSpeed);
     }
 
     private void ApplyBuildPerformanceMode()

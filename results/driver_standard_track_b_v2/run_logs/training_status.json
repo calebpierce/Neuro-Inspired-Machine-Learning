@@ -1,0 +1,38 @@
+{
+    "DriverStandard": {
+        "checkpoints": [
+            {
+                "steps": 499958,
+                "file_path": "results\\driver_standard_track_b_v2\\DriverStandard\\DriverStandard-499958.onnx",
+                "reward": 17.242177622658865,
+                "creation_time": 1777934469.8284676,
+                "auxillary_file_paths": [
+                    "results\\driver_standard_track_b_v2\\DriverStandard\\DriverStandard-499958.pt"
+                ]
+            },
+            {
+                "steps": 533869,
+                "file_path": "results\\driver_standard_track_b_v2\\DriverStandard\\DriverStandard-533869.onnx",
+                "reward": 21.309959944413635,
+                "creation_time": 1777934572.6598144,
+                "auxillary_file_paths": [
+                    "results\\driver_standard_track_b_v2\\DriverStandard\\DriverStandard-533869.pt"
+                ]
+            }
+        ],
+        "final_checkpoint": {
+            "steps": 533869,
+            "file_path": "results\\driver_standard_track_b_v2\\DriverStandard.onnx",
+            "reward": 21.309959944413635,
+            "creation_time": 1777934572.6598144,
+            "auxillary_file_paths": [
+                "results\\driver_standard_track_b_v2\\DriverStandard\\DriverStandard-533869.pt"
+            ]
+        }
+    },
+    "metadata": {
+        "stats_format_version": "0.3.0",
+        "mlagents_version": "1.1.0",
+        "torch_version": "2.2.2+cpu"
+    }
+}

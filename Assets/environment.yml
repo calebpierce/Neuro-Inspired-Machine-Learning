@@ -1,0 +1,15 @@
+name: niml-mlagents
+channels:
+  - defaults
+dependencies:
+  - python=3.10.12
+  - pip=26.0.1
+  - setuptools=80.9.0
+  - wheel=0.46.3
+  - pip:
+      - mlagents==1.1.0
+      - mlagents-envs==1.1.0
+      - torch==2.2.2
+      - numpy==1.23.5
+      - onnx==1.15.0
+      - protobuf==3.20.3

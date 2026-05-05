@@ -46,6 +46,15 @@ public class ProceduralTrackGenerator : MonoBehaviour
     [SerializeField] private float barrierWidth = 0.35f;
     [SerializeField] private Color barrierColor = Color.red;
 
+    [Header("Random Obstacles")]
+    [SerializeField] private bool generateRandomObstacles = false;
+    [SerializeField] [Range(0f, 1f)] private float obstacleSpawnChance = 0.75f;
+    [SerializeField] private float obstacleWidth = 1.5f;
+    [SerializeField] private float obstacleLength = 2.5f;
+    [SerializeField] private float obstacleHeight = 1.2f;
+    [SerializeField] private float obstacleSideMargin = 0.5f;
+    [SerializeField] private Color obstacleColor = new Color(1f, 0.6f, 0.1f);
+
     [Header("Randomness")]
     [SerializeField] private bool randomizeSeedOnGenerate = true;
     [SerializeField] private int seed = 12345;
@@ -65,6 +74,7 @@ public class ProceduralTrackGenerator : MonoBehaviour
     private Material runtimeStartLineMaterial;
     private Material runtimeFinishLineMaterial;
     private Material runtimeBarrierMaterial;
+    private Material runtimeObstacleMaterial;
     private bool raceStarted;
     private bool raceFinished;
     private Vector3 raceStartPoint;
@@ -82,8 +92,14 @@ public class ProceduralTrackGenerator : MonoBehaviour
     public float LineLength => lineLength;
     public float LineThickness => lineThickness;
     public bool GenerateBarriers => generateBarriers;
+    public bool GenerateRandomObstacles => generateRandomObstacles;
     public float BarrierHeight => barrierHeight;
     public float BarrierWidth => barrierWidth;
+    public float ObstacleSpawnChance => obstacleSpawnChance;
+    public float ObstacleWidth => obstacleWidth;
+    public float ObstacleLength => obstacleLength;
+    public float ObstacleHeight => obstacleHeight;
+    public float ObstacleSideMargin => obstacleSideMargin;
     public int Seed => seed;
     public IReadOnlyList<Vector3> PathPoints => pathPoints;
     public string CurrentTrackId => currentTrackId;
@@ -146,6 +162,12 @@ public class ProceduralTrackGenerator : MonoBehaviour
         {
             roadJointLength = roadWidth * 0.75f;
         }
+
+        obstacleSpawnChance = Mathf.Clamp01(obstacleSpawnChance);
+        obstacleWidth = Mathf.Max(0.25f, obstacleWidth);
+        obstacleLength = Mathf.Max(0.25f, obstacleLength);
+        obstacleHeight = Mathf.Max(0.25f, obstacleHeight);
+        obstacleSideMargin = Mathf.Max(0f, obstacleSideMargin);
 
         if (randomizeSeedOnGenerate)
         {
@@ -246,6 +268,12 @@ public class ProceduralTrackGenerator : MonoBehaviour
         generateBarriers = snapshot.generateBarriers;
         barrierHeight = Mathf.Max(0.1f, snapshot.barrierHeight);
         barrierWidth = Mathf.Max(0.05f, snapshot.barrierWidth);
+        generateRandomObstacles = snapshot.generateRandomObstacles;
+        obstacleSpawnChance = Mathf.Clamp01(snapshot.obstacleSpawnChance);
+        obstacleWidth = Mathf.Max(0.25f, snapshot.obstacleWidth);
+        obstacleLength = Mathf.Max(0.25f, snapshot.obstacleLength);
+        obstacleHeight = Mathf.Max(0.25f, snapshot.obstacleHeight);
+        obstacleSideMargin = Mathf.Max(0f, snapshot.obstacleSideMargin);
 
         pathPoints.Clear();
         pathPoints.AddRange(snapshot.ToPathPoints());
@@ -343,6 +371,11 @@ public class ProceduralTrackGenerator : MonoBehaviour
         {
             BuildBarriers(true);
             BuildBarriers(false);
+        }
+
+        if (generateRandomObstacles)
+        {
+            BuildRandomObstacles();
         }
     }
 
@@ -521,6 +554,83 @@ public class ProceduralTrackGenerator : MonoBehaviour
         }
 
         return runtimeBarrierMaterial;
+    }
+
+    private Material GetOrCreateObstacleMaterial()
+    {
+        if (runtimeObstacleMaterial == null)
+        {
+            runtimeObstacleMaterial = CreateMarkerMaterial(obstacleColor);
+        }
+        else
+        {
+            runtimeObstacleMaterial.color = obstacleColor;
+        }
+
+        return runtimeObstacleMaterial;
+    }
+
+    private void ApplyObstacleSurfaceSettings(GameObject surface)
+    {
+        Renderer renderer = surface.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            renderer.sharedMaterial = GetOrCreateObstacleMaterial();
+        }
+
+        Collider collider = surface.GetComponent<Collider>();
+        if (collider != null && roadPhysicsMaterial != null)
+        {
+            collider.sharedMaterial = roadPhysicsMaterial;
+        }
+    }
+
+    private void BuildRandomObstacles()
+    {
+        if (trackRoot == null || pathPoints.Count < 4)
+        {
+            return;
+        }
+
+        var obstacleRandom = new System.Random(seed ^ 0x5F3759DF);
+
+        for (int segmentIndex = 1; segmentIndex < pathPoints.Count - 2; segmentIndex++)
+        {
+            if (obstacleRandom.NextDouble() > obstacleSpawnChance)
+            {
+                continue;
+            }
+
+            Vector3 start = pathPoints[segmentIndex];
+            Vector3 end = pathPoints[segmentIndex + 1];
+            Vector3 segment = end - start;
+            float segmentLengthValue = segment.magnitude;
+            if (segmentLengthValue <= 0.01f)
+            {
+                continue;
+            }
+
+            Vector3 forward = segment / segmentLengthValue;
+            Vector3 right = Vector3.Cross(Vector3.up, forward).normalized;
+            float maxLateralOffset = Mathf.Max(0f, (roadWidth * 0.5f) - (obstacleWidth * 0.5f) - obstacleSideMargin);
+            float lateralOffset = maxLateralOffset > 0f
+                ? Mathf.Lerp(-maxLateralOffset, maxLateralOffset, (float)obstacleRandom.NextDouble())
+                : 0f;
+
+            GameObject obstacle = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            obstacle.name = $"Segment Obstacle {segmentIndex:000}";
+            obstacle.transform.SetParent(trackRoot, false);
+            obstacle.transform.SetPositionAndRotation(
+                Vector3.Lerp(start, end, 0.5f) + right * lateralOffset + Vector3.up * ((obstacleHeight * 0.5f) - (roadThickness * 0.5f)),
+                Quaternion.LookRotation(forward, Vector3.up));
+            obstacle.transform.localScale = new Vector3(
+                Mathf.Max(0.25f, Mathf.Min(obstacleWidth, roadWidth - obstacleSideMargin * 2f)),
+                obstacleHeight,
+                Mathf.Min(obstacleLength, segmentLengthValue));
+            obstacle.AddComponent<RaycastObstacle>();
+
+            ApplyObstacleSurfaceSettings(obstacle);
+        }
     }
 
     private Vector3 GetBarrierCornerPoint(int segmentIndex, bool leftSide, bool atStart)

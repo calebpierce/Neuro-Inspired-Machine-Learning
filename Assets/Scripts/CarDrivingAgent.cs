@@ -11,6 +11,7 @@ using UnityEditor;
 [RequireComponent(typeof(BehaviorParameters))]
 public class CarDrivingAgent : Agent
 {
+    
     public struct EpisodeResult
     {
         public string trackId;
@@ -49,6 +50,8 @@ public class CarDrivingAgent : Agent
     [SerializeField] private float throttleDeadZone = 0.05f;
     [SerializeField] private float stallGraceSeconds = 1.5f;
 
+    /* These private fields basically just track where we are in the episode and how
+       much real progress we've made so far. it helps give an idea of when to stip the training run */
     private Rigidbody carRigidbody;
     private BehaviorParameters behaviorParameters;
     private PrometeoCarController carController;
@@ -70,6 +73,7 @@ public class CarDrivingAgent : Agent
 
     public override void Initialize()
     {
+        /* this stuff basically lets the script find referenves durung runtime if my genius self forgets to assign them in the editor */
         if (trainingManager == null)
         {
             trainingManager = FindFirstObjectByType<DrivingTrainingManager>();
@@ -101,6 +105,8 @@ public class CarDrivingAgent : Agent
 
     public override void OnEpisodeBegin()
     {
+        /* At the start of each episode I want a full reset of both the scene state
+           and the progress reward logic. */
         if (trainingManager == null)
         {
             return;
@@ -126,11 +132,16 @@ public class CarDrivingAgent : Agent
 
     public override void CollectObservations(VectorSensor sensor)
     {
+        /* here I give the policy
+           a front-facing distance sketch from the rays, then how fast it's going, how much it's currently steering, and where
+           the next target sits relative to the car. */
         if (trainingManager == null || rayPerception == null || carRigidbody == null)
         {
             return;
         }
 
+        /* I normalize the ray distances so the network always sees values in a
+           consistent range regardless of the actual max ray distance setting. */
         rayPerception.UpdateObservations();
         float[] distances = rayPerception.GetDistances();
         for (int i = 0; i < distances.Length; i++)
@@ -155,6 +166,8 @@ public class CarDrivingAgent : Agent
 
     public override void OnActionReceived(ActionBuffers actions)
     {
+        /* This section basically just turns the model outputs into car controls and
+           then evaluates whether that action helped or hurt the run. */
         if (trainingManager == null || carAdapter == null)
         {
             return;
@@ -192,6 +205,9 @@ public class CarDrivingAgent : Agent
         episodeSteps++;
         episodeElapsedSeconds += Time.fixedDeltaTime;
 
+        /* After applying the action, I compare the new state to the old
+           one so I can reward actual progress toward the next checkpoint instead of
+           just rewarding motion in general. */
         float currentDistanceToCheckpoint = GetDistanceToNextCheckpoint();
         float distanceImprovement = Mathf.Max(0f, previousDistanceToCheckpoint - currentDistanceToCheckpoint);
         bestDistanceToCheckpoint = Mathf.Min(bestDistanceToCheckpoint, currentDistanceToCheckpoint);
@@ -204,16 +220,26 @@ public class CarDrivingAgent : Agent
 
         if (hasRemainingCheckpoint && currentDistanceToCheckpoint <= lastMeaningfulDistanceToCheckpoint - minProgressDeltaForTimeoutReset)
         {
+            /* I only reset the "no progress" timer when the car has clearly moved
+               closer in a meaningful way. Tiny jitters near the same spot should not
+               keep the episode alive forever. */
             lastMeaningfulDistanceToCheckpoint = currentDistanceToCheckpoint;
             lastMeaningfulProgressTime = episodeElapsedSeconds;
         }
 
         if (hasRemainingCheckpoint)
         {
+            /* While checkpoints remain, I reward incremental forward progress. Once
+               the last checkpoint is gone, I stop using this shaping so the car
+               can't farm reward by hovering around the finish area.... ask me how I wasted hours training wondering why the car was stopping just before crossing the finish line ... */
             AddReward(distanceImprovement * progressRewardScale);
 
             if (HasPassedNextCheckpoint(currentDistanceToCheckpoint, currentCheckpointPlaneDistance))
             {
+                /* When we reach a checkpoint, I stack a few signals together:
+                   base checkpoint reward, a segment-time bonus, and a speed bonus.
+                   Then I advance all the cached distances so the next segment starts
+                   from a clean baseline. */
                 AddReward(checkpointReachedReward);
                 AddReward(CalculateCheckpointTimeBonus());
                 AddReward(CalculateSpeedBonus(speedMagnitude, checkpointSpeedRewardPerMetersPerSecond));
@@ -240,11 +266,15 @@ public class CarDrivingAgent : Agent
 
         if (episodeElapsedSeconds >= stallGraceSeconds && speedMagnitude < idlePenaltyThreshold * 0.8f)
         {
+            /* This is just a gentle nudge against sitting still. I keep it small so
+               it shapes behavior without completely dominating the main objective. I added this as an attempt to get the car to stop sitting still, though it turned out to be another issue anyways. oh well i just kept it in*/
             AddReward(noProgressPenalty * 0.02f);
         }
 
         if (trainingManager.TrackGenerator.HasFinishedLap(transform.position))
         {
+            /* Finish is terminal and one-shot. As soon as we detect it,
+               I pay out the finish rewards, record the result, and end immediately. */
             AddReward(finishReward);
             AddReward(CalculateFinishTimeBonus());
             AddReward(CalculateSpeedBonus(speedMagnitude, finishSpeedRewardPerMetersPerSecond));
@@ -256,6 +286,8 @@ public class CarDrivingAgent : Agent
 
         if (trainingManager.TrackGenerator.IsOffTrack(transform.position))
         {
+            /* Going off track is a hard failure in this setup because I want the
+               policy to treat track boundaries as part of the task, not scenery. this is a leftover from when we didnt have barriers to keep the car from going off, so its more of a legacy thing now since the car cany physically go off the track anymore*/
             AddReward(offTrackPenalty);
             pendingTerminationReason = "off_track";
             RecordEpisodeResult(false);
@@ -265,6 +297,8 @@ public class CarDrivingAgent : Agent
 
         if (episodeElapsedSeconds - lastMeaningfulProgressTime >= noProgressTimeoutSeconds)
         {
+            /* This timeout catches cases where the car isn't technically off track
+               but also isn't doing anything useful anymore. */
             AddReward(noProgressPenalty);
             pendingTerminationReason = "no_progress_timeout";
             RecordEpisodeResult(false);
@@ -282,6 +316,8 @@ public class CarDrivingAgent : Agent
 
     public override void Heuristic(in ActionBuffers actionsOut)
     {
+        /* I only use this for quick sanity checks in the editor. It gives me a
+           manual drive mode without changing the actual model-facing action format. I actually dont think I ever got this working whatever tho*/
         ActionSegment<float> continuousActions = actionsOut.ContinuousActions;
         if (continuousActions.Length < 2)
         {
@@ -294,6 +330,9 @@ public class CarDrivingAgent : Agent
 
     private void OnCollisionEnter(Collision collision)
     {
+        /* Here I treat barriers and generated obstacles the same way. If the car
+           slams into either one, I want the agent to feel that as a navigation
+           mistake, not as some separate special case. */
         if (!enabled || collision.collider == null)
         {
             return;
@@ -301,7 +340,8 @@ public class CarDrivingAgent : Agent
 
         string hitName = collision.collider.name;
         bool hitBarrier = hitName.StartsWith("Barrier");
-        if (!hitBarrier && trainingManager != null && !trainingManager.TrackGenerator.IsOffTrack(transform.position))
+        bool hitObstacle = collision.collider.GetComponentInParent<RaycastObstacle>() != null;
+        if (!hitBarrier && !hitObstacle && trainingManager != null && !trainingManager.TrackGenerator.IsOffTrack(transform.position))
         {
             return;
         }
@@ -316,6 +356,8 @@ public class CarDrivingAgent : Agent
 
         if (IsTerminalBarrierImpact(collision))
         {
+            /* I only terminate on a solid impact. A light scrape should still hurt,
+               but I don't want every side brush to instantly kill the episode. */
             AddReward(terminalCollisionPenalty);
             pendingTerminationReason = "barrier_collision";
             RecordEpisodeResult(false);
@@ -325,6 +367,7 @@ public class CarDrivingAgent : Agent
 
     private void RecordEpisodeResult(bool completed)
     {
+        /* This method basically just packages up the final episode stats once.*/
         if (episodeResultRecorded || trainingManager == null)
         {
             return;
@@ -348,6 +391,9 @@ public class CarDrivingAgent : Agent
 
     private float GetDistanceToNextCheckpoint()
     {
+        /* Once we run out of checkpoints, I switch the target to the finish line.
+           That keeps the other reward code simple because it can always ask
+           for "distance to next target" without caring which phase we're in. */
         if (trainingManager == null || trainingManager.TrackGenerator == null)
         {
             return 0f;
@@ -364,6 +410,9 @@ public class CarDrivingAgent : Agent
 
     private Vector3 GetLocalDirectionToNextCheckpoint()
     {
+        /* I convert the next target into the car's local space because that makes
+           the observation easier for the policy to use. "Target is front-left" is
+           way more stable than a raw world-space position. */
         if (trainingManager == null || trainingManager.TrackGenerator == null)
         {
             return Vector3.forward;
@@ -386,6 +435,8 @@ public class CarDrivingAgent : Agent
 
     private float GetSignedDistanceToNextCheckpointPlane()
     {
+        /* Here I build an invisible plane through the next checkpoint so I can tell
+           whether we've actually crossed it, not just come close to it. */
         if (trainingManager == null || trainingManager.TrackGenerator == null)
         {
             return 0f;
@@ -416,6 +467,9 @@ public class CarDrivingAgent : Agent
 
     private bool HasPassedNextCheckpoint(float currentDistanceToCheckpoint, float currentCheckpointPlaneDistance)
     {
+        /* I accept either a direct close-enough hit or a proper plane crossing.
+           That makes checkpoint detection tolerant without letting the car claim a
+           checkpoint from obviously the wrong place. */
         if (currentDistanceToCheckpoint <= checkpointReachDistance)
         {
             return true;
@@ -458,6 +512,8 @@ public class CarDrivingAgent : Agent
 
     private static float NormalizePositiveAction(float value, float activationThreshold)
     {
+        /* The model technically gives me a 0..1-ish forward signal here, but I add
+           a dead zone so tiny noisy outputs don't keep the car creeping forever. */
         float positiveValue = Mathf.Clamp01(value);
         if (positiveValue <= activationThreshold)
         {
@@ -470,12 +526,16 @@ public class CarDrivingAgent : Agent
 
     private float CalculateCheckpointTimeBonus()
     {
+        /* I base this on time since the last rewarded checkpoint, not total episode
+           time. That keeps early checkpoints from being artificially overvalued. */
         float segmentElapsedSeconds = episodeElapsedSeconds - lastCheckpointRewardTime;
         return checkpointTimeBonusScale / Mathf.Max(segmentElapsedSeconds, 1f);
     }
 
     private float CalculateFinishTimeBonus()
     {
+        /* Same idea as the checkpoint bonus: I care about how quickly we finished
+           the current segment, not whether it happened early in the episode. */
         float segmentElapsedSeconds = episodeElapsedSeconds - lastCheckpointRewardTime;
         return finishTimeBonusScale / Mathf.Max(segmentElapsedSeconds, 1f);
     }
@@ -487,6 +547,9 @@ public class CarDrivingAgent : Agent
 
     private bool IsTerminalBarrierImpact(Collision collision)
     {
+        /* This part checks whether we really hit the surface head-on enough to call
+           it a crash. I project everything onto the ground plane because vertical
+           noise isn't useful for this decision. */
         if (collision.contactCount == 0 || carRigidbody == null)
         {
             return false;

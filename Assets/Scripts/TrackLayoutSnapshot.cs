@@ -17,6 +17,12 @@ public class TrackLayoutSnapshot
     public bool generateBarriers;
     public float barrierHeight;
     public float barrierWidth;
+    public bool generateRandomObstacles;
+    public float obstacleSpawnChance;
+    public float obstacleWidth;
+    public float obstacleLength;
+    public float obstacleHeight;
+    public float obstacleSideMargin;
     public List<SerializableVector3> pathPoints = new List<SerializableVector3>();
 
     public static TrackLayoutSnapshot FromPath(string id, int trackSeed, IReadOnlyList<Vector3> points, ProceduralTrackGenerator generator)
@@ -34,7 +40,13 @@ public class TrackLayoutSnapshot
             lineThickness = generator.LineThickness,
             generateBarriers = generator.GenerateBarriers,
             barrierHeight = generator.BarrierHeight,
-            barrierWidth = generator.BarrierWidth
+            barrierWidth = generator.BarrierWidth,
+            generateRandomObstacles = generator.GenerateRandomObstacles,
+            obstacleSpawnChance = generator.ObstacleSpawnChance,
+            obstacleWidth = generator.ObstacleWidth,
+            obstacleLength = generator.ObstacleLength,
+            obstacleHeight = generator.ObstacleHeight,
+            obstacleSideMargin = generator.ObstacleSideMargin
         };
 
         for (int i = 0; i < points.Count; i++)

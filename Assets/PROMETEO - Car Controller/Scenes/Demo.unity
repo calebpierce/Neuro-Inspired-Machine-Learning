@@ -313,12 +313,15 @@ MonoBehaviour:
   trackGenerator: {fileID: 1380483901}
   carAdapter: {fileID: 543450653621877421}
   trackFolder: TrainingData/Tracks
+  streamingTrackFolder: StreamingAssets/TrainingData/Tracks
   resultsFolder: TrainingData/Results
-  trainingMode: 0
+  trainingMode: 1
   currentTrainingTrackId: TrackB
-  replayTrackIds: []
+  replayTrackIds:
+  - TrackA
   replayTrackProbability: 0.5
   saveGeneratedTrackWhenMissing: 1
+  allowTrackGenerationFallback: 1
   evaluationTrackIds:
   - TrackA
   evaluationEpisodesPerTrack: 5
@@ -985,12 +988,12 @@ MonoBehaviour:
   carTransform: {fileID: 543450653621877418}
   carSpawnHeight: 0.2
   trackTimer: {fileID: 1091943076}
-  segmentCount: 18
+  segmentCount: 9
   segmentLength: 18
   maxTurnAngle: 45
   laneStepLimit: 9
   horizontalBounds: 50
-  roadWidth: 8
+  roadWidth: 16
   roadThickness: 0.4
   roadJointLength: 6
   roadMaterial: {fileID: 2100000, guid: 55353298a807862419e21ac81159210a, type: 2}
@@ -1003,8 +1006,15 @@ MonoBehaviour:
   barrierHeight: 1.5
   barrierWidth: 0.1
   barrierColor: {r: 1, g: 0, b: 0, a: 1}
+  generateRandomObstacles: 1
+  obstacleSpawnChance: 0.5
+  obstacleWidth: 1.5
+  obstacleLength: 2.5
+  obstacleHeight: 1.2
+  obstacleSideMargin: 0.5
+  obstacleColor: {r: 1, g: 0.6, b: 0.1, a: 1}
   randomizeSeedOnGenerate: 1
-  seed: -328934739
+  seed: -880387305
   trackSaveFolder: TrainingData/Tracks
   showCheckpointGizmos: 1
   checkpointGizmoRadius: 0.6
@@ -1276,7 +1286,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 261786959625234688, guid: 79d0ca8b77e301442afdb49f102e8aed, type: 3}
       propertyPath: m_LocalRotation.w
-      value: 0.9752564
+      value: 0.99592966
       objectReference: {fileID: 0}
     - target: {fileID: 261786959625234688, guid: 79d0ca8b77e301442afdb49f102e8aed, type: 3}
       propertyPath: m_LocalRotation.x
@@ -1284,11 +1294,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 261786959625234688, guid: 79d0ca8b77e301442afdb49f102e8aed, type: 3}
       propertyPath: m_LocalRotation.y
-      value: -0.22107689
+      value: 0.09013375
       objectReference: {fileID: 0}
     - target: {fileID: 261786959625234688, guid: 79d0ca8b77e301442afdb49f102e8aed, type: 3}
       propertyPath: m_LocalRotation.z
-      value: -0
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 261786959625234688, guid: 79d0ca8b77e301442afdb49f102e8aed, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x

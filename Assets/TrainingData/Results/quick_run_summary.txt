@@ -1,0 +1,26 @@
+Continuous Learning Track Driving - Quick Run Summary
+Generated: 2026-05-04T21:07:17
+
+Saved tracks
+TrackA: seed=-965457001, pathPoints=11
+TrackB: seed=-880387305, pathPoints=11
+
+Trainer configs
+Standard: batch_size=256, buffer_size=4096
+Replay: batch_size=2048, buffer_size=20480
+
+Checks
+[PASS] Exists: TrackA.json :: C:\Users\Caleb\Desktop\NIML\Neuro Inspired Machine Learning\Assets\StreamingAssets\TrainingData\Tracks\TrackA.json
+[PASS] Exists: TrackB.json :: C:\Users\Caleb\Desktop\NIML\Neuro Inspired Machine Learning\Assets\StreamingAssets\TrainingData\Tracks\TrackB.json
+[PASS] Exists: driver_standard.yaml :: C:\Users\Caleb\Desktop\NIML\Neuro Inspired Machine Learning\Assets\TrainingConfigs\driver_standard.yaml
+[PASS] Exists: driver_continuous.yaml :: C:\Users\Caleb\Desktop\NIML\Neuro Inspired Machine Learning\Assets\TrainingConfigs\driver_continuous.yaml
+[PASS] Exists: StandardModel_TrackA_Before.onnx :: C:\Users\Caleb\Desktop\NIML\Neuro Inspired Machine Learning\Assets\Models\LiveDemo\StandardModel_TrackA_Before.onnx
+[PASS] Exists: StandardModel_TrackB_And_After.onnx :: C:\Users\Caleb\Desktop\NIML\Neuro Inspired Machine Learning\Assets\Models\LiveDemo\StandardModel_TrackB_And_After.onnx
+[PASS] Exists: ReplayModel_TrackB_And_After.onnx :: C:\Users\Caleb\Desktop\NIML\Neuro Inspired Machine Learning\Assets\Models\LiveDemo\ReplayModel_TrackB_And_After.onnx
+[PASS] Track IDs present :: TrackA=TrackA, TrackB=TrackB
+[PASS] Track seeds present :: TrackA seed=-965457001, TrackB seed=-880387305
+[PASS] Standard config behavior key present :: driver_standard.yaml contains DriverStandard
+[PASS] Standard config hyperparameters found :: batch_size=256, buffer_size=4096
+[PASS] Replay config hyperparameters found :: batch_size=2048, buffer_size=20480
+
+STATUS: PASS
